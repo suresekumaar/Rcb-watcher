@@ -44,42 +44,51 @@ def send_telegram(message):
         logging.error(f"Failed to send Telegram message: {e}")
 
 def check_tickets():
-    # Check 1: Does /ticket API endpoint return results?
+    # Only rely on the API endpoints â€” the main site is an SPA and always
+    # returns 200 on /ticket regardless of whether tickets are live or not.
     for endpoint in ENDPOINTS_TO_TRY:
         try:
             r = requests.get(endpoint, headers=HEADERS, timeout=10)
-            logging.info(f"{endpoint} → {r.status_code}")
+            logging.info(f"{endpoint} â†’ {r.status_code}")
             if r.status_code == 200:
                 data = r.json()
-                # If result array is non-empty, tickets are live!
                 result = data.get("result", [])
-                status = data.get("status", "")
                 if isinstance(result, list) and len(result) > 0:
-                    return True, f"🚨 <b>RCB TICKETS ARE LIVE!</b>\n\n✅ Endpoint: {endpoint}\n🎟 Items found: {len(result)}\n\n👉 Buy now: https://shop.royalchallengers.com/ticket"
+                    return True, f"ðŸš¨ <b>RCB TICKETS ARE LIVE!</b>\n\nâœ… Endpoint: {endpoint}\nðŸŽŸ Items found: {len(result)}\n\nðŸ‘‰ Buy now: https://shop.royalchallengers.com/ticket"
         except Exception as e:
             logging.warning(f"Error checking {endpoint}: {e}")
 
-    # Check 2: Does the /ticket page stop redirecting to /merchandise?
-    try:
-        r = requests.get(
-            "https://shop.royalchallengers.com/ticket",
-            headers=HEADERS,
-            timeout=10,
-            allow_redirects=True
-        )
-        final_url = r.url
-        logging.info(f"shop.royalchallengers.com/ticket → final URL: {final_url}")
-        if "merchandise" not in final_url and r.status_code == 200:
-            return True, f"🚨 <b>RCB TICKETS ARE LIVE!</b>\n\n✅ Ticket page is now accessible!\n\n👉 Buy now: https://shop.royalchallengers.com/ticket"
-    except Exception as e:
-        logging.warning(f"Error checking main URL: {e}")
-
     return False, None
 
+def validate_telegram():
+    """Check that the bot token is valid before starting."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe"
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            bot_name = r.json()["result"]["username"]
+            logging.info(f"Telegram bot connected: @{bot_name}")
+            return True
+        else:
+            logging.error(f"Invalid Telegram token! Response: {r.text}")
+            return False
+    except Exception as e:
+        logging.error(f"Telegram validation failed: {e}")
+        return False
+
 def main():
-    logging.info("RCB Ticket Monitor started 🏏")
+    logging.info("RCB Ticket Monitor started ðŸ")
     logging.info(f"Checking every {CHECK_INTERVAL} seconds...")
-    send_telegram("✅ <b>RCB Ticket Monitor is running!</b>\n\nI'll notify you the moment tickets go live. Checking every 1 minute. 🏏")
+
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        logging.error("TELEGRAM_TOKEN or TELEGRAM_CHAT_ID env variable is missing! Exiting.")
+        return
+
+    if not validate_telegram():
+        logging.error("Fix your TELEGRAM_TOKEN in Railway variables and redeploy.")
+        return
+
+    send_telegram("âœ… <b>RCB Ticket Monitor is running!</b>\n\nI'll notify you the moment tickets go live. Checking every 1 minute. ðŸ")
 
     alert_sent = False
 
