@@ -20,12 +20,8 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36"
 }
 
-ENDPOINTS_TO_TRY = [
-    "https://rcbscaleapi.ticketgenie.in/ticket",
-    "https://rcbscaleapi.ticketgenie.in/tickets",
-    "https://rcbscaleapi.ticketgenie.in/event",
-    "https://rcbscaleapi.ticketgenie.in/events",
-]
+# Confirmed exact endpoint from DevTools
+TICKET_API = "https://rcbscaleapi.ticketgenie.in/ticket/eventlist/0"
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -44,24 +40,36 @@ def send_telegram(message):
         logging.error(f"Failed to send Telegram message: {e}")
 
 def check_tickets():
-    # Only rely on the API endpoints â€” the main site is an SPA and always
-    # returns 200 on /ticket regardless of whether tickets are live or not.
-    for endpoint in ENDPOINTS_TO_TRY:
-        try:
-            r = requests.get(endpoint, headers=HEADERS, timeout=10)
-            logging.info(f"{endpoint} â†’ {r.status_code}")
-            if r.status_code == 200:
-                data = r.json()
-                result = data.get("result", [])
-                if isinstance(result, list) and len(result) > 0:
-                    return True, f"ðŸš¨ <b>RCB TICKETS ARE LIVE!</b>\n\nâœ… Endpoint: {endpoint}\nðŸŽŸ Items found: {len(result)}\n\nðŸ‘‰ Buy now: https://shop.royalchallengers.com/ticket"
-        except Exception as e:
-            logging.warning(f"Error checking {endpoint}: {e}")
+    try:
+        r = requests.get(TICKET_API, headers=HEADERS, timeout=10)
+        logging.info(f"ticket/eventlist/0 â†’ {r.status_code}")
+
+        if r.status_code == 200:
+            data = r.json()
+            result = data.get("result", {})
+
+            # Currently result is {} (empty object) when no tickets
+            # Tickets are live when result is a non-empty list or object
+            is_empty = (result == {} or result == [] or result is None)
+
+            if not is_empty:
+                logging.info(f"Tickets found! Result: {result}")
+                return True, (
+                    "ðŸš¨ <b>RCB TICKETS ARE LIVE!</b>\n\n"
+                    "âœ… API returned ticket data!\n\n"
+                    "ðŸ‘‰ Buy now: https://shop.royalchallengers.com/ticket"
+                )
+            else:
+                logging.info(f"No tickets yet. Result is empty: {result}")
+        else:
+            logging.warning(f"Unexpected status: {r.status_code}")
+
+    except Exception as e:
+        logging.warning(f"Error checking ticket API: {e}")
 
     return False, None
 
 def validate_telegram():
-    """Check that the bot token is valid before starting."""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe"
     try:
         r = requests.get(url, timeout=10)
@@ -78,6 +86,7 @@ def validate_telegram():
 
 def main():
     logging.info("RCB Ticket Monitor started ðŸ")
+    logging.info(f"Monitoring: {TICKET_API}")
     logging.info(f"Checking every {CHECK_INTERVAL} seconds...")
 
     if not TELEGRAM_TOKEN or not CHAT_ID:
@@ -88,7 +97,12 @@ def main():
         logging.error("Fix your TELEGRAM_TOKEN in Railway variables and redeploy.")
         return
 
-    send_telegram("âœ… <b>RCB Ticket Monitor is running!</b>\n\nI'll notify you the moment tickets go live. Checking every 1 minute. ðŸ")
+    send_telegram(
+        "âœ… <b>RCB Ticket Monitor is running!</b>\n\n"
+        "ðŸŽ¯ Monitoring: <code>ticket/eventlist/0</code>\n"
+        "â± Checking every 1 minute\n\n"
+        "I'll notify you the moment tickets go live! ðŸ"
+    )
 
     alert_sent = False
 
@@ -97,16 +111,15 @@ def main():
             is_live, message = check_tickets()
             if is_live and not alert_sent:
                 logging.info("TICKETS ARE LIVE! Sending alert...")
+                # Send 3 times so you definitely don't miss it
                 send_telegram(message)
-                # Send 3 times to make sure you don't miss it
                 time.sleep(5)
                 send_telegram(message)
                 time.sleep(5)
                 send_telegram(message)
                 alert_sent = True
             elif not is_live:
-                logging.info("No tickets yet. Checking again in 1 minute...")
-                alert_sent = False  # Reset in case tickets go offline and come back
+                alert_sent = False
         except Exception as e:
             logging.error(f"Unexpected error: {e}")
 
