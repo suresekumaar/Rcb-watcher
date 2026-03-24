@@ -10,7 +10,7 @@ logging.basicConfig(
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-CHECK_INTERVAL = 60  # seconds
+CHECK_INTERVAL = 30  # seconds
 
 HEADERS = {
     "Accept": "application/json, text/plain, */*",
@@ -22,6 +22,9 @@ HEADERS = {
 
 # Confirmed exact endpoint from DevTools
 TICKET_API = "https://rcbscaleapi.ticketgenie.in/ticket/eventlist/0"
+
+# Alert only when this team appears in team_1 or team_2
+TARGET_TEAM = "Chennai Super Kings"
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -42,25 +45,42 @@ def send_telegram(message):
 def check_tickets():
     try:
         r = requests.get(TICKET_API, headers=HEADERS, timeout=10)
-        logging.info(f"ticket/eventlist/0 â†’ {r.status_code}")
+        logging.info(f"ticket/eventlist/0 → {r.status_code}")
 
         if r.status_code == 200:
             data = r.json()
             result = data.get("result", {})
 
-            # Currently result is {} (empty object) when no tickets
-            # Tickets are live when result is a non-empty list or object
-            is_empty = (result == {} or result == [] or result is None)
+            # result is a list when events are available
+            if not isinstance(result, list) or len(result) == 0:
+                logging.info("No events in result yet.")
+                return False, None
 
-            if not is_empty:
-                logging.info(f"Tickets found! Result: {result}")
-                return True, (
-                    "ðŸš¨ <b>RCB TICKETS ARE LIVE!</b>\n\n"
-                    "âœ… API returned ticket data!\n\n"
-                    "ðŸ‘‰ Buy now: https://shop.royalchallengers.com/ticket"
-                )
-            else:
-                logging.info(f"No tickets yet. Result is empty: {result}")
+            # Log all available matches
+            logging.info(f"Found {len(result)} event(s):")
+            for event in result:
+                t1 = event.get("team_1", "")
+                t2 = event.get("team_2", "")
+                name = event.get("event_Name", "")
+                date = event.get("event_Display_Date", "")
+                logging.info(f"  → {name} | {date}")
+
+                # Check if CSK is playing
+                if TARGET_TEAM.lower() in t1.lower() or TARGET_TEAM.lower() in t2.lower():
+                    price = event.get("event_Price_Range", "N/A")
+                    venue = event.get("venue_Name", "N/A")
+                    city = event.get("city_Name", "N/A")
+                    return True, (
+                        f"🚨 <b>RCB vs CSK TICKETS ARE LIVE!</b> 🔴💛\n\n"
+                        f"🏏 <b>{name}</b>\n"
+                        f"📅 {date}\n"
+                        f"🏟 {venue}, {city}\n"
+                        f"💰 {price}\n\n"
+                        f"👉 <a href='https://shop.royalchallengers.com/ticket'>BUY TICKETS NOW</a>"
+                    )
+
+            logging.info(f"CSK match not found yet in {len(result)} event(s).")
+
         else:
             logging.warning(f"Unexpected status: {r.status_code}")
 
@@ -85,8 +105,9 @@ def validate_telegram():
         return False
 
 def main():
-    logging.info("RCB Ticket Monitor started ðŸ")
+    logging.info("RCB Ticket Monitor started 🏏")
     logging.info(f"Monitoring: {TICKET_API}")
+    logging.info(f"Alerting for: {TARGET_TEAM}")
     logging.info(f"Checking every {CHECK_INTERVAL} seconds...")
 
     if not TELEGRAM_TOKEN or not CHAT_ID:
@@ -98,10 +119,10 @@ def main():
         return
 
     send_telegram(
-        "âœ… <b>RCB Ticket Monitor is running!</b>\n\n"
-        "ðŸŽ¯ Monitoring: <code>ticket/eventlist/0</code>\n"
-        "â± Checking every 1 minute\n\n"
-        "I'll notify you the moment tickets go live! ðŸ"
+        "✅ <b>RCB Ticket Monitor is running!</b>\n\n"
+        f"🎯 Watching for: <b>{TARGET_TEAM}</b> match tickets\n"
+        "⏱ Checking every 30 seconds\n\n"
+        "I'll notify you the moment CSK tickets go live! 🏏"
     )
 
     alert_sent = False
@@ -110,8 +131,7 @@ def main():
         try:
             is_live, message = check_tickets()
             if is_live and not alert_sent:
-                logging.info("TICKETS ARE LIVE! Sending alert...")
-                # Send 3 times so you definitely don't miss it
+                logging.info("CSK MATCH TICKETS ARE LIVE! Sending alert...")
                 send_telegram(message)
                 time.sleep(5)
                 send_telegram(message)
